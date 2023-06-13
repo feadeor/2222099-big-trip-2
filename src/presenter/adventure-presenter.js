@@ -1,13 +1,13 @@
 import { render, remove, RenderPosition } from '../framework/render.js';
 import UiBlocker from '../framework/ui-blocker/ui-blocker.js';
-import ViewSort from '../view/sort.js';
+import ViewSort from '../view/sorting.js';
 import ViewAdventureList from '../view/adventure-list.js';
 import ViewEmpty from '../view/empty-point.js';
-import ViewLoad from '../view/load.js';
-import LoadError from '../view/load-error.js';
+import ViewLoad from '../view/loading.js';
+import EmptyAdditionalInfo from '../view/no-info.js';
 import PointPresenter from './waypoint-presenter.js';
 import PointNewPresenter from './waypoint-new-presenter.js';
-import AdventureInfoPresenter from './adventure-info-presenter.js';
+import TripInfoPresenter from './adventure-info-presenter.js';
 import { sorting } from '../utils/sort.js';
 import { filter } from '../utils/filters.js';
 import { UpdateType, UserAction, SortType, FilterType, TimeLimit } from '../utils/consts.js';
@@ -25,11 +25,10 @@ export default class AdventurePresenter {
   #sortComponent = null;
   #pointListComponent = new ViewAdventureList();
   #loadingComponent = new ViewLoad();
-  #errorLoadComponent = new LoadError();
-
+  #noAdditionalInfoComponent = new EmptyAdditionalInfo();
 
   #pointPresenters = new Map();
-  #AdventureInfoPresenter = null;
+  #tripInfoPresenter = null;
   #currentSortType = SortType.DAY;
   #pointNewPresenter = null;
   #filterType = FilterType.EVERYTHING;
@@ -75,12 +74,10 @@ export default class AdventurePresenter {
       this.#renderLoading();
       return;
     }
-
     if (this.#offersModel.offers.length === 0 || this.#destinationsModel.destinations.length === 0) {
-      this.#errorLoadComponent();
+      this.#renderNoAdditionalInfo();
       return;
     }
-
     const pointCount = this.points.length;
     if (pointCount === 0) {
       this.#renderNoPoints();
@@ -89,7 +86,12 @@ export default class AdventurePresenter {
     this.#renderPointList(this.points);
     this.#renderSort();
   };
-  
+
+  #handleModeChange = () => {
+    this.#pointNewPresenter.destroy();
+    this.#pointPresenters.forEach((presenter) => presenter.resetView());
+  };
+
   createPoint = (callback) => {
     this.#currentSortType = SortType.DAY;
     this.#filterModel.setFilter(UpdateType.MAJOR, FilterType.EVERYTHING);
@@ -97,6 +99,30 @@ export default class AdventurePresenter {
       render(this.#pointListComponent, this.#tripContainer);
     }
     this.#pointNewPresenter.init(callback);
+  };
+
+  #handleModelEvent = (updateType, data) => {
+    switch (updateType) {
+      case UpdateType.PATCH:
+        this.#pointPresenters.get(data.id).init(data);
+        break;
+      case UpdateType.MINOR:
+        this.#clearBoard();
+        this.#clearTripInfo();
+        this.#renderTripInfo();
+        this.#renderBoard();
+        break;
+      case UpdateType.MAJOR:
+        this.#clearBoard({resetSortType: true});
+        this.#renderBoard();
+        break;
+      case UpdateType.INIT:
+        this.#isLoading = false;
+        remove(this.#loadingComponent);
+        this.#renderBoard();
+        this.#renderTripInfo();
+        break;
+    }
   };
 
   #handleSortTypeChange = (sortType) => {
@@ -107,30 +133,6 @@ export default class AdventurePresenter {
     this.#currentSortType = sortType;
     this.#clearBoard();
     this.#renderBoard();
-  };
-
-  #renderErrorLoad = () => {
-    render(this.#errorLoadComponent, this.#tripContainer, RenderPosition.AFTERBEGIN);
-  };
-
-  #clearBoard = ({resetSortType = false} = {}) => {
-    this.#pointNewPresenter.destroy();
-    this.#pointPresenters.forEach((presenter) => presenter.destroy());
-    this.#pointPresenters.clear();
-
-    remove(this.#sortComponent);
-
-    if (this.#noPointComponent) {
-      remove(this.#noPointComponent);
-    }
-    if (resetSortType) {
-      this.#currentSortType = SortType.DAY;
-    }
-  };
-
-  #handleModeChange = () => {
-    this.#pointNewPresenter.destroy();
-    this.#pointPresenters.forEach((presenter) => presenter.resetView());
   };
 
   #renderSort = () => {
@@ -176,6 +178,10 @@ export default class AdventurePresenter {
     this.#uiBlocker.unblock();
   };
 
+   #renderNoAdditionalInfo = () => {
+    render(this.#noAdditionalInfoComponent, this.#tripContainer, RenderPosition.AFTERBEGIN);
+  };
+
   #renderPointList = (points) => {
     render(this.#pointListComponent, this.#tripContainer);
     this.#renderPoints(points);
@@ -186,14 +192,11 @@ export default class AdventurePresenter {
   };
 
   #renderTripInfo = () => {
-    this.#AdventureInfoPresenter = new AdventureInfoPresenter(this.#tripInfoContainer, this.#destinationsModel, this.#offersModel);
+    this.#tripInfoPresenter = new TripInfoPresenter(this.#tripInfoContainer, this.#destinationsModel, this.#offersModel);
     const sortedPoints = sorting[SortType.DAY](this.points);
-    this.#AdventureInfoPresenter.init(sortedPoints);
+    this.#tripInfoPresenter.init(sortedPoints);
   };
 
-  #clearTripInfo = () => {
-    this.#AdventureInfoPresenter.destroy();
-  };
 
   #renderPoint = (point) => {
     const pointPresenter = new PointPresenter({
@@ -211,28 +214,22 @@ export default class AdventurePresenter {
     points.forEach((point) => this.#renderPoint(point));
   };
 
-   #handleModelEvent = (updateType, data) => {
-    switch (updateType) {
-      case UpdateType.PATCH:
-        this.#pointPresenters.get(data.id).init(data);
-        break;
-      case UpdateType.MINOR:
-        this.#clearBoard();
-        this.#clearTripInfo();
-        this.#renderTripInfo();
-        this.#renderBoard();
-        break;
-      case UpdateType.MAJOR:
-        this.#clearBoard({resetSortType: true});
-        this.#renderBoard();
-        break;
-      case UpdateType.INIT:
-        this.#isLoading = false;
-        remove(this.#loadingComponent);
-        this.#renderBoard();
-        this.#renderTripInfo();
-        break;
+  #clearBoard = ({resetSortType = false} = {}) => {
+    this.#pointNewPresenter.destroy();
+    this.#pointPresenters.forEach((presenter) => presenter.destroy());
+    this.#pointPresenters.clear();
+
+    remove(this.#sortComponent);
+
+    if (this.#noPointComponent) {
+      remove(this.#noPointComponent);
+    }
+    if (resetSortType) {
+      this.#currentSortType = SortType.DAY;
     }
   };
-}
 
+  #clearTripInfo = () => {
+    this.#tripInfoPresenter.destroy();
+  };
+}
